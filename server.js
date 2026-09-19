@@ -1,35 +1,49 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 const path = require('path');
 
 const app = express();
 
-// PostgreSQL 数据库连接
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+// MySQL 数据库连接池
+let pool;
 
-// 初始化数据库表
 async function initDB() {
-  const client = await pool.connect();
-  try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('数据库表已初始化');
-  } catch (error) {
-    console.error('数据库初始化失败:', error);
-  } finally {
-    client.release();
+  // Railway MySQL 提供 DATABASE_URL，也支持单独的环境变量
+  let config;
+  if (process.env.DATABASE_URL) {
+    // Railway MySQL 插件格式: mysql://user:password@host:port/database
+    const url = new URL(process.env.DATABASE_URL);
+    config = {
+      host: url.hostname,
+      port: parseInt(url.port || '3306'),
+      user: url.username,
+      password: url.password,
+      database: url.pathname.slice(1)
+    };
+  } else {
+    config = {
+      host: process.env.MYSQLHOST,
+      port: parseInt(process.env.MYSQLPORT || '3306'),
+      user: process.env.MYSQLUSER,
+      password: process.env.MYSQLPASSWORD,
+      database: process.env.MYSQLDATABASE
+    };
   }
+
+  pool = mysql.createPool({...config, waitForConnections: true, connectionLimit: 10, queueLimit: 0});
+
+  // 创建表
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(50) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  console.log('数据库表已初始化');
 }
 
 // 中间件
@@ -73,14 +87,14 @@ app.post('/api/register', async (req, res) => {
   
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    const result = await pool.query(
-      'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+    await pool.query(
+      'INSERT INTO users (username, password) VALUES (?, ?)',
       [username, hashedPassword]
     );
     
     res.json({ success: true, message: '注册成功！请登录' });
   } catch (error) {
-    if (error.code === '23505') {
+    if (error.code === 'ER_DUP_ENTRY') {
       res.json({ success: false, message: '用户名已存在' });
     } else {
       console.error('注册失败:', error);
@@ -98,16 +112,16 @@ app.post('/api/login', async (req, res) => {
   }
   
   try {
-    const result = await pool.query(
-      'SELECT * FROM users WHERE username = $1',
+    const [rows] = await pool.query(
+      'SELECT * FROM users WHERE username = ?',
       [username]
     );
     
-    if (result.rows.length === 0) {
+    if (rows.length === 0) {
       return res.json({ success: false, message: '用户名或密码错误' });
     }
     
-    const user = result.rows[0];
+    const user = rows[0];
     const isValid = await bcrypt.compare(password, user.password);
     
     if (!isValid) {
