@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>社交 - 论坛</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; min-height: 100vh; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    .header { background: white; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .logo { font-size: 24px; color: #667eea; font-weight: bold; cursor: pointer; }
+    .user-info { display: flex; align-items: center; gap: 15px; }
+    .username { color: #333; font-weight: 500; }
+    .nav-links { display: flex; gap: 15px; }
+    .nav-link { padding: 8px 16px; border-radius: 8px; background: #f0f0f0; color: #333; text-decoration: none; font-size: 14px; }
+    .nav-link:hover, .nav-link.active { background: #667eea; color: white; }
+    .logout-btn { padding: 10px 20px; border: none; background: #f0f0f0; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    .container { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+    .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); margin-bottom: 20px; }
+    .card h2 { color: #333; margin-bottom: 20px; font-size: 20px; }
+    .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+    .tab { padding: 10px 24px; border: none; border-radius: 25px; cursor: pointer; font-size: 14px; font-weight: 600; background: #f0f0f0; color: #666; transition: all 0.3s; }
+    .tab.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .user-list { display: flex; flex-direction: column; gap: 12px; }
+    .user-item { display: flex; align-items: center; justify-content: space-between; padding: 15px; border-radius: 12px; background: #f9f9f9; transition: background 0.2s; }
+    .user-item:hover { background: #f0f0f0; }
+    .user-info { display: flex; align-items: center; gap: 12px; }
+    .user-avatar { width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; font-weight: bold; }
+    .user-name { font-weight: 600; color: #333; }
+    .user-date { font-size: 12px; color: #999; }
+    .btn-follow { padding: 8px 20px; border: none; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
+    .btn-follow.follow { background: #667eea; color: white; }
+    .btn-follow.following { background: #e0e0e0; color: #666; }
+    .empty { text-align: center; color: #999; padding: 30px; font-size: 14px; }
+    .stats { display: flex; gap: 30px; margin-bottom: 25px; }
+    .stat { text-align: center; }
+    .stat-num { font-size: 28px; font-weight: bold; color: #667eea; }
+    .stat-label { font-size: 13px; color: #999; margin-top: 4px; }
+    .back-link { display: inline-block; margin-bottom: 20px; color: white; text-decoration: none; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo" onclick="location.href='/dashboard'">🌐 论坛</div>
+    <div class="nav-links">
+      <a href="/posts" class="nav-link">📝 发帖</a>
+      <a href="/social" class="nav-link active">👥 社交</a>
+      <a href="/dashboard" class="nav-link">🏠 首页</a>
+    </div>
+    <div class="user-info">
+      <span class="username" id="username"></span>
+      <button class="logout-btn" onclick="logout()">退出登录</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <a href="/dashboard" class="back-link">← 返回首页</a>
+    <div class="card">
+      <h2>👥 社交中心</h2>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-num" id="following-count">0</div>
+          <div class="stat-label">关注</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num" id="followers-count">0</div>
+          <div class="stat-label">粉丝</div>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('discover')">发现用户</button>
+        <button class="tab" onclick="switchTab('following')">我的关注</button>
+        <button class="tab" onclick="switchTab('followers')">我的粉丝</button>
+      </div>
+      <div id="user-list" class="user-list"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentUserId = null;
+
+    async function checkAuth() {
+      const res = await fetch('/api/current-user');
+      const data = await res.json();
+      if (!data.loggedIn) { location.href = '/'; return; }
+      currentUserId = data.userId;
+      document.getElementById('username').textContent = '👤 ' + data.username;
+      await Promise.all([loadUsers(), loadFollowing(), loadFollowers()]);
+      renderUsers(window._allUsers || []);
+    }
+
+    async function loadUsers() {
+      const res = await fetch('/api/users');
+      window._allUsers = await res.json();
+    }
+
+    async function loadFollowing() {
+      const res = await fetch('/api/following');
+      window._following = await res.json();
+      document.getElementById('following-count').textContent = window._following.length;
+    }
+
+    async function loadFollowers() {
+      const res = await fetch('/api/followers');
+      window._followers = await res.json();
+      document.getElementById('followers-count').textContent = window._followers.length;
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      if (tab === 'discover') renderUsers(window._allUsers || []);
+      else if (tab === 'following') renderUsers(window._following || []);
+      else if (tab === 'followers') renderUsers(window._followers || []);
+    }
+
+    function renderUsers(users) {
+      const container = document.getElementById('user-list');
+      if (users.length === 0) {
+        container.innerHTML = '<div class="empty">暂无用户</div>';
+        return;
+      }
+      container.innerHTML = users.map(u => {
+        const isFollowing = (window._following || []).some(f => f.id === u.id);
+        const initial = u.username.charAt(0).toUpperCase();
+        return `
+          <div class="user-item">
+            <div class="user-info">
+              <div class="user-avatar">${initial}</div>
+              <div>
+                <div class="user-name">${u.username}</div>
+                <div class="user-date">加入于 ${new Date(u.created_at).toLocaleDateString('zh-CN')}</div>
+              </div>
+            </div>
+            <button class="btn-follow ${isFollowing ? 'following' : 'follow'}" onclick="toggleFollow(${u.id}, this)">
+              ${isFollowing ? '已关注' : '关注'}
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function toggleFollow(userId, btn) {
+      const isFollowing = btn.classList.contains('following');
+      const method = isFollowing ? 'DELETE' : 'POST';
+      const url = isFollowing ? `/api/follow/${userId}` : '/api/follow';
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
+      if (res.ok) {
+        await loadFollowing();
+        await loadFollowers();
+        // Refresh current tab
+        const activeTab = document.querySelector('.tab.active').textContent.trim();
+        if (activeTab === '发现用户') renderUsers(window._allUsers || []);
+        else if (activeTab === '我的关注') renderUsers(window._following || []);
+        else renderUsers(window._followers || []);
+      }
+    }
+
+    function logout() {
+      fetch('/api/logout');
+      location.href = '/';
+    }
+
+    checkAuth();
+  </script>
+</body>
+</html>

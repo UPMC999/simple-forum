@@ -10,10 +10,8 @@ const app = express();
 let pool;
 
 async function initDB() {
-  // Railway MySQL 提供 DATABASE_URL，也支持单独的环境变量
   let config;
   if (process.env.DATABASE_URL) {
-    // Railway MySQL 插件格式: mysql://user:password@host:port/database
     const url = new URL(process.env.DATABASE_URL);
     config = {
       host: url.hostname,
@@ -43,6 +41,40 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS posts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      username VARCHAR(50) NOT NULL,
+      title VARCHAR(200) NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS comments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      post_id INT NOT NULL,
+      user_id INT NOT NULL,
+      username VARCHAR(50) NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (post_id) REFERENCES posts(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS follows (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      follower_id INT NOT NULL,
+      following_id INT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY unique_follow (follower_id, following_id),
+      FOREIGN KEY (follower_id) REFERENCES users(id),
+      FOREIGN KEY (following_id) REFERENCES users(id)
+    )
+  `);
   console.log('数据库表已初始化');
 }
 
@@ -60,12 +92,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 // 登录状态检查中间件
 const requireAuth = (req, res, next) => {
   if (!req.session.userId) {
-    return res.redirect('/');
+    return res.status(401).json({ error: '请先登录' });
   }
   next();
 };
 
-// 路由：主页（登录/注册页面）
+// ============ 认证相关 ============
+
+// 路由：主页
 app.get('/', (req, res) => {
   if (req.session.userId) {
     return res.redirect('/dashboard');
@@ -91,7 +125,6 @@ app.post('/api/register', async (req, res) => {
       'INSERT INTO users (username, password) VALUES (?, ?)',
       [username, hashedPassword]
     );
-    
     res.json({ success: true, message: '注册成功！请登录' });
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') {
@@ -112,10 +145,7 @@ app.post('/api/login', async (req, res) => {
   }
   
   try {
-    const [rows] = await pool.query(
-      'SELECT * FROM users WHERE username = ?',
-      [username]
-    );
+    const [rows] = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
     
     if (rows.length === 0) {
       return res.json({ success: false, message: '用户名或密码错误' });
@@ -144,23 +174,251 @@ app.get('/api/logout', (req, res) => {
   res.redirect('/');
 });
 
-// 路由：仪表盘
-app.get('/dashboard', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
 // 路由：获取当前用户
 app.get('/api/current-user', (req, res) => {
   if (req.session.userId) {
-    res.json({ loggedIn: true, username: req.session.username });
+    res.json({ loggedIn: true, username: req.session.username, userId: req.session.userId });
   } else {
     res.json({ loggedIn: false });
   }
 });
 
+// ============ 发帖相关 ============
+
+// 获取帖子列表
+app.get('/api/posts', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT posts.*, users.username,
+             (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) as comment_count
+      FROM posts
+      JOIN users ON posts.user_id = users.id
+      ORDER BY posts.created_at DESC
+      LIMIT 50
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('获取帖子失败:', error);
+    res.status(500).json({ error: '获取帖子失败' });
+  }
+});
+
+// 发帖
+app.post('/api/posts', requireAuth, async (req, res) => {
+  const { title, content } = req.body;
+  
+  if (!title || !content) {
+    return res.status(400).json({ error: '标题和内容不能为空' });
+  }
+  
+  if (title.length > 200) {
+    return res.status(400).json({ error: '标题不能超过200个字符' });
+  }
+  
+  try {
+    const [result] = await pool.query(
+      'INSERT INTO posts (user_id, username, title, content) VALUES (?, ?, ?, ?)',
+      [req.session.userId, req.session.username, title, content]
+    );
+    res.json({ success: true, id: result.insertId, message: '发帖成功！' });
+  } catch (error) {
+    console.error('发帖失败:', error);
+    res.status(500).json({ error: '发帖失败，请重试' });
+  }
+});
+
+// 获取单个帖子及评论
+app.get('/api/posts/:id', async (req, res) => {
+  try {
+    const [posts] = await pool.query(`
+      SELECT posts.*, users.username,
+             (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) as comment_count
+      FROM posts
+      JOIN users ON posts.user_id = users.id
+      WHERE posts.id = ?
+    `, [req.params.id]);
+    
+    if (posts.length === 0) {
+      return res.status(404).json({ error: '帖子不存在' });
+    }
+    
+    const [comments] = await pool.query(`
+      SELECT comments.*, users.username
+      FROM comments
+      JOIN users ON comments.user_id = users.id
+      WHERE comments.post_id = ?
+      ORDER BY comments.created_at ASC
+    `, [req.params.id]);
+    
+    res.json({ post: posts[0], comments });
+  } catch (error) {
+    console.error('获取帖子详情失败:', error);
+    res.status(500).json({ error: '获取帖子详情失败' });
+  }
+});
+
+// 删除帖子
+app.delete('/api/posts/:id', requireAuth, async (req, res) => {
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM posts WHERE id = ? AND user_id = ?',
+      [req.params.id, req.session.userId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ error: '无权删除此帖子' });
+    }
+    res.json({ success: true, message: '删除成功' });
+  } catch (error) {
+    console.error('删除帖子失败:', error);
+    res.status(500).json({ error: '删除失败' });
+  }
+});
+
+// ============ 评论相关 ============
+
+// 发表评论
+app.post('/api/comments', requireAuth, async (req, res) => {
+  const { postId, content } = req.body;
+  
+  if (!postId || !content) {
+    return res.status(400).json({ error: '帖子ID和内容不能为空' });
+  }
+  
+  try {
+    const [result] = await pool.query(
+      'INSERT INTO comments (post_id, user_id, username, content) VALUES (?, ?, ?, ?)',
+      [postId, req.session.userId, req.session.username, content]
+    );
+    res.json({ success: true, id: result.insertId, message: '评论成功！' });
+  } catch (error) {
+    console.error('评论失败:', error);
+    res.status(500).json({ error: '评论失败，请重试' });
+  }
+});
+
+// 删除评论
+app.delete('/api/comments/:id', requireAuth, async (req, res) => {
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM comments WHERE id = ? AND user_id = ?',
+      [req.params.id, req.session.userId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ error: '无权删除此评论' });
+    }
+    res.json({ success: true, message: '删除成功' });
+  } catch (error) {
+    console.error('删除评论失败:', error);
+    res.status(500).json({ error: '删除失败' });
+  }
+});
+
+// ============ 社交相关 ============
+
+// 获取所有用户
+app.get('/api/users', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, username, created_at FROM users WHERE id != ?',
+      [req.session.userId]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('获取用户列表失败:', error);
+    res.status(500).json({ error: '获取用户列表失败' });
+  }
+});
+
+// 关注用户
+app.post('/api/follow', requireAuth, async (req, res) => {
+  const { userId } = req.body;
+  
+  if (!userId || parseInt(userId) === req.session.userId) {
+    return res.status(400).json({ error: '无效的用户' });
+  }
+  
+  try {
+    await pool.query(
+      'INSERT IGNORE INTO follows (follower_id, following_id) VALUES (?, ?)',
+      [req.session.userId, userId]
+    );
+    res.json({ success: true, message: '关注成功！' });
+  } catch (error) {
+    console.error('关注失败:', error);
+    res.status(500).json({ error: '关注失败' });
+  }
+});
+
+// 取消关注
+app.delete('/api/follow/:userId', requireAuth, async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM follows WHERE follower_id = ? AND following_id = ?',
+      [req.session.userId, req.params.userId]
+    );
+    res.json({ success: true, message: '已取消关注' });
+  } catch (error) {
+    console.error('取消关注失败:', error);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// 获取关注列表
+app.get('/api/following', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT users.id, users.username, users.created_at
+      FROM follows
+      JOIN users ON follows.following_id = users.id
+      WHERE follows.follower_id = ?
+    `, [req.session.userId]);
+    res.json(rows);
+  } catch (error) {
+    console.error('获取关注列表失败:', error);
+    res.status(500).json({ error: '获取关注列表失败' });
+  }
+});
+
+// 获取粉丝列表
+app.get('/api/followers', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT users.id, users.username, users.created_at
+      FROM follows
+      JOIN users ON follows.follower_id = users.id
+      WHERE follows.following_id = ?
+    `, [req.session.userId]);
+    res.json(rows);
+  } catch (error) {
+    console.error('获取粉丝列表失败:', error);
+    res.status(500).json({ error: '获取粉丝列表失败' });
+  }
+});
+
+// ============ 页面路由 ============
+
+// 仪表盘
+app.get('/dashboard', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// 发帖页面
+app.get('/posts', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'posts.html'));
+});
+
+// 帖子详情页面
+app.get('/post/:id', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'post.html'));
+});
+
+// 社交页面
+app.get('/social', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'social.html'));
+});
+
 const PORT = process.env.PORT || 3000;
 
-// 启动服务器
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`论坛已启动: http://localhost:${PORT}`);
