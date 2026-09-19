@@ -1,0 +1,14 @@
+{
+  "name": "simple-forum",
+  "version": "1.0.0",
+  "description": "A simple forum with user registration and login",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "bcryptjs": "^2.4.3",
+    "express-session": "^1.17.3"
+  }
+}

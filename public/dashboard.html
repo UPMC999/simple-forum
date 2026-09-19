@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>仪表盘 - 论坛</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    .header {
+      background: white;
+      padding: 15px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    .logo {
+      font-size: 24px;
+      color: #667eea;
+      font-weight: bold;
+    }
+    
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    
+    .username {
+      color: #333;
+      font-weight: 500;
+    }
+    
+    .logout-btn {
+      padding: 10px 20px;
+      border: none;
+      background: #f0f0f0;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.3s;
+    }
+    
+    .logout-btn:hover {
+      background: #e0e0e0;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    
+    .welcome-card {
+      background: white;
+      padding: 40px;
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      text-align: center;
+    }
+    
+    .welcome-icon {
+      font-size: 80px;
+      margin-bottom: 20px;
+    }
+    
+    .welcome-card h2 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    
+    .welcome-card p {
+      color: #666;
+      margin-bottom: 30px;
+    }
+    
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-top: 30px;
+    }
+    
+    .feature {
+      padding: 25px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 15px;
+      color: white;
+      text-align: center;
+    }
+    
+    .feature-icon {
+      font-size: 40px;
+      margin-bottom: 10px;
+    }
+    
+    .feature h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+    
+    .feature p {
+      font-size: 14px;
+      opacity: 0.9;
+      margin: 0;
+    }
+    
+    .loading {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: white;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">加载中...</div>
+  
+  <div id="main-content" style="display: none;">
+    <header class="header">
+      <div class="logo">🌐 论坛</div>
+      <div class="user-info">
+        <span class="username" id="username"></span>
+        <button class="logout-btn" onclick="logout()">退出登录</button>
+      </div>
+    </header>
+    
+    <div class="container">
+      <div class="welcome-card">
+        <div class="welcome-icon">🎉</div>
+        <h2>欢迎回来，<span id="welcome-username"></span>！</h2>
+        <p>你已成功登录论坛，可以开始探索社区内容了</p>
+        
+        <div class="features">
+          <div class="feature">
+            <div class="feature-icon">📝</div>
+            <h3>发帖</h3>
+            <p>分享你的想法和观点</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">💬</div>
+            <h3>评论</h3>
+            <p>与其他用户互动交流</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">👥</div>
+            <h3>社交</h3>
+            <p>结识志同道合的朋友</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 检查登录状态
+    async function checkAuth() {
+      try {
+        const response = await fetch('/api/current-user');
+        const data = await response.json();
+        
+        if (!data.loggedIn) {
+          window.location.href = '/';
+          return;
+        }
+        
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('main-content').style.display = 'block';
+        document.getElementById('username').textContent = '👤 ' + data.username;
+        document.getElementById('welcome-username').textContent = data.username;
+      } catch (error) {
+        window.location.href = '/';
+      }
+    }
+    
+    // 退出登录
+    async function logout() {
+      try {
+        await fetch('/api/logout');
+        window.location.href = '/';
+      } catch (error) {
+        window.location.href = '/';
+      }
+    }
+    
+    checkAuth();
+  </script>
+</body>
+</html>
